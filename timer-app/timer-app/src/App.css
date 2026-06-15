@@ -1,0 +1,25 @@
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding-top: 80px;
+  text-align: center;
+  font-family: system-ui, sans-serif;
+  color: #1f2d3d;
+}
+.name-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 40px;
+}
+.name-row input { padding: 4px 8px; }
+h1 { font-size: 48px; margin: 24px 0; }
+.done { font-size: 20px; color: #4a5568; }
+.buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.buttons button { padding: 8px 16px; cursor: pointer; }
