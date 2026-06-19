@@ -1,26 +1,42 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from database import engine, Base, get_db
+import models
 from services.oylan import send_message
+from services.chat import save_message, get_history
 
 app = FastAPI()
 
+@app.on_event('startup')
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = 'default'
 
-@app.get("/")
-def root():
-    return {"message": "Oylan assistant is running!"}
+@app.get('/')
+def root(): return {'message': 'Oylan assistant is running!'}
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+@app.get('/health')
+def health(): return {'status': 'ok'}
 
-@app.post("/chat")
-async def chat(req: ChatRequest):
+@app.post('/chat')
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     if not req.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
+        raise HTTPException(400, detail='Message cannot be empty')
     try:
-        reply = await send_message(req.message)
-        return {"reply": reply}
+        history = await get_history(db, req.session_id)
+        reply = await send_message(req.message, history)
+        await save_message(db, req.session_id, 'user', req.message)
+        await save_message(db, req.session_id, 'assistant', reply)
+        return {'reply': reply, 'session_id': req.session_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, detail=str(e))
+
+@app.get('/history/{session_id}')
+async def history(session_id: str, db: AsyncSession = Depends(get_db)):
+    msgs = await get_history(db, session_id, limit=50)
+    return {'session_id': session_id, 'messages': msgs}

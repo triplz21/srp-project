@@ -1,3 +1,4 @@
+from __future__ import annotations
 import httpx
 import os
 from dotenv import load_dotenv
@@ -13,11 +14,17 @@ HEADERS = {
     'accept': 'application/json',
 }
 
-async def send_message(content: str) -> str:
+async def send_message(content: str,
+                        history: list[dict] | None = None) -> str:
     url = f'{BASE_URL}/assistant/{ASSISTANT_ID}/interactions/'
-    data = {'content': content, 'stream': False}
+    context = ''
+    if history:
+        for msg in history:
+            prefix = 'User' if msg['role'] == 'user' else 'Assistant'
+            context += f"{prefix}: {msg['content']}\n"
+    full_content = context + f'User: {content}' if context else content
+    data = {'content': full_content, 'stream': False}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, headers=HEADERS, data=data)
-        resp.raise_for_status()
-        result = resp.json()
-        return result['response']['content']
+        r = await client.post(url, headers=HEADERS, data=data)
+        r.raise_for_status()
+        return r.json()['response']['content']
