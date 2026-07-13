@@ -6,10 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import engine, Base, get_db
 import models
-import fitz
-from models import Job, Candidate, Result
+from models import Job, Candidate, Result, InterviewSlot
 from services.oylan import send_message
 from services.chat import save_message, get_history
+from services.resume import extract_or_route_resume, build_analysis_prompt
 
 app = FastAPI()
 
@@ -26,7 +26,6 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-# ── Чат ──────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str
     session_id: str = 'default'
@@ -82,6 +81,55 @@ async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, detail='Job not found')
     return job
 
+# ── Слоты на интервью ────────────────────────────────
+class SlotCreate(BaseModel):
+    job_id: int
+    datetimes: list[str]
+
+@app.post('/slots')
+async def create_slots(data: SlotCreate, db: AsyncSession = Depends(get_db)):
+    for dt in data.datetimes:
+        slot = InterviewSlot(job_id=data.job_id, datetime=dt)
+        db.add(slot)
+    await db.commit()
+    return {'message': f'{len(data.datetimes)} слотов создано'}
+
+@app.get('/jobs/{job_id}/slots')
+async def get_slots(job_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(InterviewSlot).where(InterviewSlot.job_id == job_id)
+    )
+    return result.scalars().all()
+
+@app.delete('/slots/{slot_id}')
+async def delete_slot(slot_id: int, db: AsyncSession = Depends(get_db)):
+    slot_result = await db.execute(select(InterviewSlot).where(InterviewSlot.id == slot_id))
+    slot = slot_result.scalar_one_or_none()
+    if not slot:
+        raise HTTPException(404, detail='Слот не найден')
+    if slot.is_booked:
+        raise HTTPException(400, detail='Нельзя удалить забронированный слот')
+    await db.delete(slot)
+    await db.commit()
+    return {'message': 'Слот удалён'}
+
+@app.post('/slots/{slot_id}/book')
+async def book_slot(slot_id: int, candidate_id: int, db: AsyncSession = Depends(get_db)):
+    slot_result = await db.execute(select(InterviewSlot).where(InterviewSlot.id == slot_id))
+    slot = slot_result.scalar_one_or_none()
+    if not slot:
+        raise HTTPException(404, detail='Слот не найден')
+    if slot.is_booked:
+        raise HTTPException(400, detail='Слот уже занят')
+    slot.is_booked = 1
+    candidate_result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    candidate = candidate_result.scalar_one_or_none()
+    if candidate:
+        candidate.slot_id = slot_id
+        candidate.status = 'invited'
+    await db.commit()
+    return {'message': 'Слот забронирован', 'datetime': slot.datetime}
+
 # ── Кандидаты ────────────────────────────────────────
 @app.post('/candidates')
 async def create_candidate(
@@ -92,19 +140,16 @@ async def create_candidate(
     db: AsyncSession = Depends(get_db)
 ):
     job_id_int = int(job_id)
-
     existing = await db.execute(
         select(Candidate).where(Candidate.job_id == job_id_int, Candidate.name == name)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(400, detail='Кандидат с таким именем уже добавлен')
 
-    if file and file.filename.endswith('.pdf'):
+    if file and file.filename and file.filename.endswith('.pdf'):
         contents = await file.read()
-        doc = fitz.open(stream=contents, filetype="pdf")
-        resume_text = ""
-        for page in doc:
-            resume_text += page.get_text()
+        if contents:
+            resume_text = await extract_or_route_resume(contents, file.filename)
 
     if not resume_text.strip():
         raise HTTPException(400, detail='Резюме не может быть пустым')
@@ -120,6 +165,16 @@ async def list_candidates(job_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Candidate).where(Candidate.job_id == job_id))
     return result.scalars().all()
 
+@app.patch('/candidates/{candidate_id}/status')
+async def update_status(candidate_id: int, status: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(404, detail='Кандидат не найден')
+    candidate.status = status
+    await db.commit()
+    return candidate
+
 # ── Анализ ───────────────────────────────────────────
 @app.post('/jobs/{job_id}/analyze')
 async def analyze(job_id: int, db: AsyncSession = Depends(get_db)):
@@ -130,27 +185,13 @@ async def analyze(job_id: int, db: AsyncSession = Depends(get_db)):
 
     candidates_result = await db.execute(select(Candidate).where(Candidate.job_id == job_id))
     candidates = candidates_result.scalars().all()
-
     if not candidates:
         raise HTTPException(400, detail='No candidates found')
 
     results = []
     for candidate in candidates:
-        prompt = f"""You are an HR expert. Analyze this resume against the job criteria and give a score from 0 to 100.
-
-Job Title: {job.title}
-Job Description: {job.description}
-Required Criteria: {job.criteria}
-
-Candidate Name: {candidate.name}
-Resume: {candidate.resume}
-
-Respond ONLY in this exact format:
-SCORE: [number 0-100]
-EXPLANATION: [2-3 sentences explaining the score]"""
-
+        prompt = build_analysis_prompt(job, candidate.name, candidate.resume)
         reply = await send_message(prompt)
-
         score = 0.0
         explanation = reply
         for line in reply.split('\n'):
@@ -166,16 +207,14 @@ EXPLANATION: [2-3 sentences explaining the score]"""
             select(Result).where(Result.job_id == job_id, Result.candidate_id == candidate.id)
         )
         existing_result = existing.scalar_one_or_none()
-
         if existing_result:
             existing_result.score = score
             existing_result.explanation = explanation
         else:
             result = Result(job_id=job_id, candidate_id=candidate.id, score=score, explanation=explanation)
             db.add(result)
-
         await db.commit()
-        results.append({'candidate': candidate.name, 'score': score, 'explanation': explanation})
+        results.append({'candidate_id': candidate.id, 'candidate': candidate.name, 'score': score, 'explanation': explanation})
 
     return {'job_id': job_id, 'results': sorted(results, key=lambda x: x['score'], reverse=True)}
 
@@ -196,7 +235,9 @@ async def get_results(job_id: int, db: AsyncSession = Depends(get_db)):
                 'candidate_id': r.Candidate.id,
                 'name': r.Candidate.name,
                 'score': r.Result.score,
-                'explanation': r.Result.explanation
+                'explanation': r.Result.explanation,
+                'status': r.Candidate.status,
+                'slot_id': r.Candidate.slot_id,
             }
             for r in rows
         ]

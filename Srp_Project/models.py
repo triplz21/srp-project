@@ -17,12 +17,22 @@ class Job(Base):
     criteria = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class InterviewSlot(Base):
+    __tablename__ = 'interview_slots'
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey('jobs.id'))
+    datetime = Column(String(64))
+    is_booked = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 class Candidate(Base):
     __tablename__ = 'candidates'
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(Integer, ForeignKey('jobs.id'))
     name = Column(String(256))
     resume = Column(Text)
+    status = Column(String(32), default='pending')
+    slot_id = Column(Integer, ForeignKey('interview_slots.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Result(Base):
