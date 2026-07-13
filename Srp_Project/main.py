@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import engine, Base, get_db
 import models
-from models import Job, Candidate, Result, InterviewSlot
+from models import Job, Candidate, Result, InterviewSlot, User
 from services.oylan import send_message
 from services.chat import save_message, get_history
 from services.resume import extract_or_route_resume, build_analysis_prompt
+from auth import hash_password, verify_password, create_access_token
 
 app = FastAPI()
 
@@ -35,6 +36,46 @@ def root(): return {'message': 'Talent AI is running!'}
 
 @app.get('/health')
 def health(): return {'status': 'ok'}
+
+# ── Авторизация ──────────────────────────────────────
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str
+    role: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post('/auth/register')
+async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(select(User).where(User.email == data.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, detail='Email уже занят')
+
+    user = User(
+        email=data.email,
+        password_hash=hash_password(data.password),
+        name=data.name,
+        role=data.role,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    token = create_access_token({'sub': str(user.id)})
+    return {'access_token': token, 'token_type': 'bearer', 'role': user.role, 'name': user.name}
+
+@app.post('/auth/login')
+async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(401, detail='Неверный email или пароль')
+
+    token = create_access_token({'sub': str(user.id)})
+    return {'access_token': token, 'token_type': 'bearer', 'role': user.role, 'name': user.name}
 
 @app.post('/chat')
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):

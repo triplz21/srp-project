@@ -1,5 +1,8 @@
 alembic==1.16.5
-altgraph @ file:///System/Volumes/Data/SWE/Apps/DT/BuildRoots/BuildRoot7/ActiveBuildRoot/Library/Caches/com.apple.xbs/Sources/python3/python3-133.100.1.1/altgraph-0.17.2-py2.py3-none-any.whl
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-jose[cryptography]==3.3.0
+altgraph==0.17.2
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
@@ -14,7 +17,7 @@ fastapi==0.128.8
 filelock==3.19.1
 fonttools==4.60.2
 fsspec==2025.10.0
-future @ file:///System/Volumes/Data/SWE/Apps/DT/BuildRoots/BuildRoot7/ActiveBuildRoot/Library/Caches/com.apple.xbs/Sources/python3/python3-133.100.1.1/future-0.18.2-py3-none-any.whl
+future==0.18.2
 greenlet==3.2.5
 h11==0.16.0
 httpcore==1.0.9
@@ -23,7 +26,7 @@ idna==3.18
 importlib_resources==6.5.2
 Jinja2==3.1.6
 kiwisolver==1.4.7
-macholib @ file:///System/Volumes/Data/SWE/Apps/DT/BuildRoots/BuildRoot7/ActiveBuildRoot/Library/Caches/com.apple.xbs/Sources/python3/python3-133.100.1.1/macholib-1.15.2-py2.py3-none-any.whl
+macholib==1.15.2
 Mako==1.3.12
 MarkupSafe==3.0.3
 matplotlib==3.9.4
@@ -38,7 +41,7 @@ pyparsing==3.3.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 scipy==1.13.1
-six @ file:///System/Volumes/Data/SWE/Apps/DT/BuildRoots/BuildRoot7/ActiveBuildRoot/Library/Caches/com.apple.xbs/Sources/python3/python3-133.100.1.1/six-1.15.0-py2.py3-none-any.whl
+six==1.15.0
 SQLAlchemy==2.0.51
 starlette==0.49.3
 sympy==1.14.0
