@@ -24,6 +24,7 @@ class Job(Base):
     title = Column(String(256))
     description = Column(Text)
     criteria = Column(Text)
+    owner_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class InterviewSlot(Base):
@@ -38,6 +39,7 @@ class Candidate(Base):
     __tablename__ = 'candidates'
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(Integer, ForeignKey('jobs.id'))
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     name = Column(String(256))
     resume = Column(Text)
     status = Column(String(32), default='pending')
