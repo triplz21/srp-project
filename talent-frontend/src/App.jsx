@@ -70,6 +70,7 @@ export default function App() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const resultsRef = useRef(null)
+  const selectJobRequestRef = useRef(0)
 
   useEffect(() => {
     function onLogout() { setAuth(null) }
@@ -139,10 +140,14 @@ export default function App() {
 
   function viewJob(job) {
     setSelectedJob(job)
+    setCandidateForm({ name: "", resume: "" })
+    setPdfFile(null)
     setError("")
+    setSuccess("")
   }
 
   async function selectJob(job) {
+    const requestId = ++selectJobRequestRef.current
     setSelectedJob(job)
     setError("")
     const [cRes, rRes, sRes] = await Promise.all([
@@ -150,6 +155,7 @@ export default function App() {
       apiFetch(`/jobs/${job.id}/results`),
       apiFetch(`/jobs/${job.id}/slots`),
     ])
+    if (requestId !== selectJobRequestRef.current) return // a newer selectJob call superseded this one
     if (!cRes.ok) {
       const data = await cRes.json().catch(() => ({}))
       setError(typeof data.detail === "string" ? data.detail : "Не удалось загрузить вакансию")
@@ -167,24 +173,38 @@ export default function App() {
   }
 
   async function addCandidate() {
-    if (!candidateForm.name) { setError("Введите имя"); return }
-    if (!pdfFile && !candidateForm.resume) { setError("Загрузите PDF или введите текст резюме"); return }
+    const name = candidateForm.name.trim()
+    const resume = candidateForm.resume.trim()
+    const hasFile = !!pdfFile
+    const hasText = !!resume
+    if (!name) { setError("Введите имя"); return }
+    if (!hasFile && !hasText) { setError("Загрузите PDF или введите текст резюме"); return }
+    if (hasFile && hasText) { setError("Выберите что-то одно: PDF-файл или текст резюме"); return }
+
     const formData = new FormData()
     formData.append("job_id", String(selectedJob.id))
-    formData.append("name", candidateForm.name)
-    formData.append("resume_text", candidateForm.resume || "")
-    if (pdfFile) formData.append("file", pdfFile)
-    const res = await apiFetch(`/candidates`, { method: "POST", body: formData })
-    if (!res.ok) {
-      const data = await res.json()
-      setError(typeof data.detail === "string" ? data.detail : "Ошибка при добавлении")
-      return
+    formData.append("name", name)
+    if (hasFile) {
+      formData.append("file", pdfFile)
+    } else {
+      formData.append("resume_text", resume)
     }
-    setCandidateForm({ name: "", resume: "" })
-    setPdfFile(null)
-    setError("")
-    setSuccess("Резюме отправлено! Отслеживайте статус во вкладке «Мои отклики».")
-    setTimeout(() => setSuccess(""), 4000)
+
+    try {
+      const res = await apiFetch(`/candidates`, { method: "POST", body: formData })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setError(typeof data.detail === "string" ? data.detail : "Ошибка при добавлении")
+        return
+      }
+      setCandidateForm({ name: "", resume: "" })
+      setPdfFile(null)
+      setError("")
+      setSuccess("Резюме отправлено! Отслеживайте статус во вкладке «Мои отклики».")
+      setTimeout(() => setSuccess(""), 4000)
+    } catch {
+      setError("Не удалось отправить резюме. Проверьте соединение и попробуйте снова.")
+    }
   }
 
   async function analyze() {
@@ -292,14 +312,24 @@ export default function App() {
                 <label className="field-label">Загрузить PDF резюме (текстовый PDF)</label>
                 <label className={`dropzone ${pdfFile ? "filled" : ""}`}>
                   {pdfFile ? <><IconCheck size={15} /> {pdfFile.name}</> : <><IconFile size={15} /> Нажмите чтобы загрузить PDF</>}
-                  <input type="file" accept=".pdf" style={{ display: "none" }} onChange={e => setPdfFile(e.target.files[0])} />
+                  <input type="file" accept=".pdf" style={{ display: "none" }} onChange={e => setPdfFile(e.target.files[0] || null)} />
                 </label>
+                {pdfFile && (
+                  <button type="button" className="btn btn-sm btn-outline" style={{ marginTop: "-6px", marginBottom: "14px" }}
+                    onClick={() => setPdfFile(null)}>
+                    <IconX size={12} /> Убрать файл
+                  </button>
+                )}
 
                 <label className="field-label">Или вставьте текст резюме</label>
                 <textarea className="field" placeholder="Вставьте текст резюме..." value={candidateForm.resume}
                   onChange={e => setCandidateForm({ ...candidateForm, resume: e.target.value })} />
 
-                <button className="btn btn-primary" onClick={addCandidate}>
+                {pdfFile && candidateForm.resume.trim() && (
+                  <div className="alert alert-error"><IconAlert size={14} />Выберите что-то одно: PDF-файл или текст резюме</div>
+                )}
+
+                <button className="btn btn-primary" onClick={addCandidate} disabled={!!pdfFile && !!candidateForm.resume.trim()}>
                   Отправить резюме <IconArrowRight size={14} />
                 </button>
               </div>
@@ -431,12 +461,32 @@ export default function App() {
 
                 <div className="section-title" style={{ marginBottom: "14px" }}>Кандидаты ({candidates.length})</div>
                 {candidates.length === 0 && <div className="empty-state">Кандидатов пока нет</div>}
-                {candidates.map(cand => (
-                  <div key={cand.id} className="card" style={{ padding: "18px 22px" }}>
-                    <div style={{ fontWeight: 620, color: "var(--text)" }}>{cand.name}</div>
-                    <div style={{ color: "var(--text-secondary)", fontSize: "13px", marginTop: "5px", lineHeight: 1.5 }}>{cand.resume?.slice(0, 120)}...</div>
-                  </div>
-                ))}
+                {candidates.map(cand => {
+                  const result = results.find(r => r.candidate_id === cand.id)
+                  const stTone = statusTone(cand.status)
+                  return (
+                    <div key={cand.id} className="card" style={{ padding: "18px 22px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "14px" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 620, color: "var(--text)" }}>{cand.name}</span>
+                            <span className="badge" style={{ background: stTone.bg, color: stTone.color, border: `1px solid ${stTone.border}` }}>
+                              <span className="status-dot" style={{ background: stTone.color }} />{stTone.label}
+                            </span>
+                          </div>
+                          <div style={{ color: "var(--text-secondary)", fontSize: "13px", marginTop: "5px", lineHeight: 1.5 }}>{cand.resume?.slice(0, 120)}...</div>
+                        </div>
+                        {result ? (
+                          <div style={{ textAlign: "center", minWidth: "60px" }}>
+                            <div style={{ fontSize: "22px", fontWeight: 760, color: scoreTone(result.score).color, letterSpacing: "-0.03em" }}>{result.score}</div>
+                          </div>
+                        ) : (
+                          <span className="tag" style={{ whiteSpace: "nowrap" }}>Не проанализирован</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
 
                 {candidates.length > 0 && (
                   <div style={{ textAlign: "center", marginTop: "28px" }}>
