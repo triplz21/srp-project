@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,10 +44,6 @@ class RegisterRequest(BaseModel):
     name: str
     role: str
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
 @app.post('/auth/register')
 async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(User).where(User.email == data.email))
@@ -68,10 +64,23 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     return {'access_token': token, 'token_type': 'bearer', 'role': user.role, 'name': user.name}
 
 @app.post('/auth/login')
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == data.email))
+async def login(request: Request, db: AsyncSession = Depends(get_db)):
+    content_type = request.headers.get('content-type', '')
+    if 'application/json' in content_type:
+        body = await request.json()
+        email = body.get('email')
+        password = body.get('password')
+    else:
+        form = await request.form()
+        email = form.get('username') or form.get('email')
+        password = form.get('password')
+
+    if not email or not password:
+        raise HTTPException(400, detail='Email и пароль обязательны')
+
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(data.password, user.password_hash):
+    if not user or not verify_password(password, user.password_hash):
         raise HTTPException(401, detail='Неверный email или пароль')
 
     token = create_access_token({'sub': str(user.id)})

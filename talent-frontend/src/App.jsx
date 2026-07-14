@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
-
-const API = import.meta.env.VITE_API_URL
+import { apiFetch, loadAuth, saveAuth, clearAuth } from "./api"
+import AuthScreen from "./AuthScreen"
 
 /* ---------- minimal inline icon set (no external deps) ---------- */
 
@@ -14,7 +14,6 @@ function Icon({ path, size = 16, className, style }) {
 }
 
 const IconBriefcase = (p) => <Icon {...p} path={<><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></>} />
-const IconUsers = (p) => <Icon {...p} path={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>} />
 const IconSparkles = (p) => <Icon {...p} path={<path d="M12 3l1.8 4.9L19 9.7l-5.2 1.8L12 16.4l-1.8-4.9L5 9.7l5.2-1.8L12 3z" />} />
 const IconCalendar = (p) => <Icon {...p} path={<><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></>} />
 const IconCheck = (p) => <Icon {...p} path={<polyline points="20 6 9 17 4 12" />} />
@@ -24,7 +23,6 @@ const IconArrowRight = (p) => <Icon {...p} path={<><line x1="5" y1="12" x2="19" 
 const IconClock = (p) => <Icon {...p} path={<><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>} />
 const IconChevronLeft = (p) => <Icon {...p} path={<polyline points="15 18 9 12 15 6" />} />
 const IconPlus = (p) => <Icon {...p} path={<><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>} />
-const IconLock = (p) => <Icon {...p} path={<><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>} />
 const IconZap = (p) => <Icon {...p} path={<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />} />
 const IconLoader = (p) => <Icon {...p} path={<><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 0 1 10 10" /></>} />
 const IconAlert = (p) => <Icon {...p} path={<><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></>} />
@@ -54,12 +52,15 @@ function rankTone(i) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("candidate")
+  const [auth, setAuth] = useState(() => loadAuth())
+  const [tab, setTab] = useState(() => (loadAuth()?.role === "employer" ? "employer" : "candidate"))
   const [jobs, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
   const [candidates, setCandidates] = useState([])
   const [results, setResults] = useState([])
   const [slots, setSlots] = useState([])
+  const [applications, setApplications] = useState([])
+  const [appsLoading, setAppsLoading] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [subPage, setSubPage] = useState("list")
   const [jobForm, setJobForm] = useState({ title: "", description: "", criteria: "" })
@@ -68,23 +69,45 @@ export default function App() {
   const [slotInput, setSlotInput] = useState("")
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-  const [bookingSlot, setBookingSlot] = useState(null)
-  const [myCandidateId, setMyCandidateId] = useState(null)
-  const [bookedSlotInfo, setBookedSlotInfo] = useState(null)
   const resultsRef = useRef(null)
 
-  useEffect(() => { fetchJobs() }, [])
+  useEffect(() => {
+    function onLogout() { setAuth(null) }
+    window.addEventListener("auth:logout", onLogout)
+    return () => window.removeEventListener("auth:logout", onLogout)
+  }, [])
+
+  useEffect(() => {
+    if (auth) setTab(auth.role === "employer" ? "employer" : "candidate")
+  }, [auth?.role])
+
+  useEffect(() => { if (auth) fetchJobs() }, [auth?.token])
+
+  useEffect(() => {
+    if (auth?.role === "candidate" && tab === "applications") fetchApplications()
+  }, [tab, auth?.token])
+
+  function logout() {
+    clearAuth()
+    setAuth(null)
+  }
 
   async function fetchJobs() {
-    const res = await fetch(`${API}/jobs`)
-    setJobs(await res.json())
+    const res = await apiFetch(`/jobs`)
+    if (res.ok) setJobs(await res.json())
+  }
+
+  async function fetchApplications() {
+    setAppsLoading(true)
+    const res = await apiFetch(`/me/applications`)
+    if (res.ok) setApplications(await res.json())
+    setAppsLoading(false)
   }
 
   async function createJob() {
     if (!jobForm.title || !jobForm.criteria) { setError("Заполните название и критерии"); return }
-    await fetch(`${API}/jobs`, {
+    await apiFetch(`/jobs`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(jobForm)
     })
     setJobForm({ title: "", description: "", criteria: "" })
@@ -96,39 +119,51 @@ export default function App() {
 
   async function addSlot() {
     if (!slotInput.trim()) { setError("Добавьте хотя бы один слот"); return }
-    await fetch(`${API}/slots`, {
+    await apiFetch(`/slots`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ job_id: selectedJob.id, datetimes: [slotInput] })
     })
     setSlotInput("")
     setError("")
     setSuccess("Слот добавлен!")
     setTimeout(() => setSuccess(""), 3000)
-    const res = await fetch(`${API}/jobs/${selectedJob.id}/slots`)
+    const res = await apiFetch(`/jobs/${selectedJob.id}/slots`)
     setSlots(await res.json())
   }
 
   async function deleteSlot(slotId) {
-    await fetch(`${API}/slots/${slotId}`, { method: "DELETE" })
-    const res = await fetch(`${API}/jobs/${selectedJob.id}/slots`)
+    await apiFetch(`/slots/${slotId}`, { method: "DELETE" })
+    const res = await apiFetch(`/jobs/${selectedJob.id}/slots`)
     setSlots(await res.json())
+  }
+
+  function viewJob(job) {
+    setSelectedJob(job)
+    setError("")
   }
 
   async function selectJob(job) {
     setSelectedJob(job)
-    setMyCandidateId(null)
-    setBookedSlotInfo(null)
+    setError("")
     const [cRes, rRes, sRes] = await Promise.all([
-      fetch(`${API}/jobs/${job.id}/candidates`),
-      fetch(`${API}/jobs/${job.id}/results`),
-      fetch(`${API}/jobs/${job.id}/slots`),
+      apiFetch(`/jobs/${job.id}/candidates`),
+      apiFetch(`/jobs/${job.id}/results`),
+      apiFetch(`/jobs/${job.id}/slots`),
     ])
+    if (!cRes.ok) {
+      const data = await cRes.json().catch(() => ({}))
+      setError(typeof data.detail === "string" ? data.detail : "Не удалось загрузить вакансию")
+      setCandidates([])
+      setResults([])
+      setSlots([])
+      setSubPage("detail")
+      return
+    }
     setCandidates(await cRes.json())
-    const rData = await rRes.json()
+    const rData = rRes.ok ? await rRes.json() : { results: [] }
     setResults(rData.results || [])
-    setSlots(await sRes.json())
-    if (tab === "employer") setSubPage("detail")
+    setSlots(sRes.ok ? await sRes.json() : [])
+    setSubPage("detail")
   }
 
   async function addCandidate() {
@@ -139,28 +174,24 @@ export default function App() {
     formData.append("name", candidateForm.name)
     formData.append("resume_text", candidateForm.resume || "")
     if (pdfFile) formData.append("file", pdfFile)
-    const res = await fetch(`${API}/candidates`, { method: "POST", body: formData })
+    const res = await apiFetch(`/candidates`, { method: "POST", body: formData })
     if (!res.ok) {
       const data = await res.json()
       setError(typeof data.detail === "string" ? data.detail : "Ошибка при добавлении")
       return
     }
-    const created = await res.json()
     setCandidateForm({ name: "", resume: "" })
     setPdfFile(null)
     setError("")
-    setSuccess("Резюме отправлено!")
-    setTimeout(() => setSuccess(""), 3000)
-    if (tab === "candidate") setMyCandidateId(created.id)
-    const res2 = await fetch(`${API}/jobs/${selectedJob.id}/candidates`)
-    setCandidates(await res2.json())
+    setSuccess("Резюме отправлено! Отслеживайте статус во вкладке «Мои отклики».")
+    setTimeout(() => setSuccess(""), 4000)
   }
 
   async function analyze() {
     setAnalyzing(true)
     setError("")
-    await fetch(`${API}/jobs/${selectedJob.id}/analyze`, { method: "POST" })
-    const res = await fetch(`${API}/jobs/${selectedJob.id}/results`)
+    await apiFetch(`/jobs/${selectedJob.id}/analyze`, { method: "POST" })
+    const res = await apiFetch(`/jobs/${selectedJob.id}/results`)
     const data = await res.json()
     setResults(data.results || [])
     setAnalyzing(false)
@@ -169,25 +200,32 @@ export default function App() {
   }
 
   async function updateStatus(candidateId, status) {
-    await fetch(`${API}/candidates/${candidateId}/status?status=${status}`, { method: "PATCH" })
-    const res = await fetch(`${API}/jobs/${selectedJob.id}/results`)
+    await apiFetch(`/candidates/${candidateId}/status?status=${status}`, { method: "PATCH" })
+    const res = await apiFetch(`/jobs/${selectedJob.id}/results`)
     const data = await res.json()
     setResults(data.results || [])
   }
 
-  async function bookSlot(slotId, candidateId) {
-    if (!candidateId) return
-    const slot = slots.find(sl => sl.id === slotId)
-    await fetch(`${API}/slots/${slotId}/book?candidate_id=${candidateId}`, { method: "POST" })
+  async function bookMySlot(slotId) {
+    const res = await apiFetch(`/slots/${slotId}/book`, { method: "POST" })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setError(typeof data.detail === "string" ? data.detail : "Не удалось забронировать слот")
+      return
+    }
+    setError("")
     setSuccess("Интервью забронировано!")
     setTimeout(() => setSuccess(""), 3000)
-    setBookingSlot(null)
-    if (candidateId === myCandidateId) setBookedSlotInfo(slot?.datetime || null)
-    const res = await fetch(`${API}/jobs/${selectedJob.id}/slots`)
-    setSlots(await res.json())
-    const res2 = await fetch(`${API}/jobs/${selectedJob.id}/results`)
-    const data = await res2.json()
-    setResults(data.results || [])
+    fetchApplications()
+  }
+
+  if (!auth) {
+    return (
+      <AuthScreen onAuthSuccess={(data) => {
+        saveAuth(data)
+        setAuth({ token: data.access_token, role: data.role, name: data.name })
+      }} />
+    )
   }
 
   return (
@@ -198,22 +236,31 @@ export default function App() {
           <span className="logo-mark"><IconZap size={16} /></span>
           Talent AI
         </div>
-        <div className="tab-switcher">
-          <button className={`tab-btn ${tab === "candidate" ? "active" : ""}`}
-            onClick={() => { setTab("candidate"); setSelectedJob(null); setError(""); setMyCandidateId(null); setBookedSlotInfo(null) }}>
-            <IconBriefcase size={15} /> Найти работу
-          </button>
-          <button className={`tab-btn ${tab === "employer" ? "active" : ""}`}
-            onClick={() => { setTab("employer"); setSubPage("list"); setSelectedJob(null); setError(""); setMyCandidateId(null); setBookedSlotInfo(null) }}>
-            <IconUsers size={15} /> Найти сотрудника
-          </button>
+        <div className="header-right">
+          {auth.role === "candidate" && (
+            <div className="tab-switcher">
+              <button className={`tab-btn ${tab === "candidate" ? "active" : ""}`}
+                onClick={() => { setTab("candidate"); setSelectedJob(null); setError("") }}>
+                <IconBriefcase size={15} /> Найти работу
+              </button>
+              <button className={`tab-btn ${tab === "applications" ? "active" : ""}`}
+                onClick={() => { setTab("applications"); setError("") }}>
+                <IconFile size={15} /> Мои отклики
+              </button>
+            </div>
+          )}
+          <div className="user-info">
+            <span className="user-name">{auth.name}</span>
+            <span className="user-role">{auth.role === "employer" ? "Работодатель" : "Кандидат"}</span>
+          </div>
+          <button className="btn btn-sm btn-outline" onClick={logout}>Выйти</button>
         </div>
       </div>
 
       <div className="container">
 
-        {/* ── КАНДИДАТ ── */}
-        {tab === "candidate" && (
+        {/* ── КАНДИДАТ: Найти работу ── */}
+        {auth.role === "candidate" && tab === "candidate" && (
           <div className="fade-in">
             <div className="page-title">Открытые вакансии</div>
             <div className="page-subtitle" style={{ marginBottom: "28px" }}>Выберите вакансию и отправьте резюме</div>
@@ -222,7 +269,7 @@ export default function App() {
             {jobs.map(job => (
               <div key={job.id}
                 className={`card card-interactive ${selectedJob?.id === job.id ? "card-selected" : ""}`}
-                onClick={() => selectJob(job)}>
+                onClick={() => viewJob(job)}>
                 <div style={{ fontWeight: 640, fontSize: "15.5px", color: "var(--text)", marginBottom: "6px" }}>{job.title}</div>
                 <div style={{ color: "var(--text-secondary)", fontSize: "13.5px", lineHeight: 1.6, marginBottom: "14px" }}>{job.description?.slice(0, 150)}...</div>
                 <span className="tag"><IconArrowRight size={12} /> Подать резюме</span>
@@ -255,43 +302,83 @@ export default function App() {
                 <button className="btn btn-primary" onClick={addCandidate}>
                   Отправить резюме <IconArrowRight size={14} />
                 </button>
-
-                {/* Слоты для кандидата — доступны только после отправки резюме */}
-                {myCandidateId !== null && (
-                  <div className="card" style={{ marginTop: "24px", background: "var(--surface-2)" }}>
-                    {bookedSlotInfo ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        <span className="icon-circle" style={{ color: "var(--green)", borderColor: "var(--green-border)" }}><IconCheck size={16} /></span>
-                        <div>
-                          <div style={{ fontWeight: 600, color: "var(--text)" }}>Интервью забронировано</div>
-                          <div style={{ color: "var(--text-secondary)", fontSize: "13px", marginTop: "2px" }}>{bookedSlotInfo}</div>
-                        </div>
-                      </div>
-                    ) : slots.filter(sl => !sl.is_booked).length > 0 ? (
-                      <>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600, color: "var(--text)", marginBottom: "14px" }}>
-                          <IconCalendar size={15} /> Доступные слоты для интервью
-                        </div>
-                        <div className="grid-2">
-                          {slots.filter(sl => !sl.is_booked).map(slot => (
-                            <button key={slot.id} className="slot-btn" onClick={() => bookSlot(slot.id, myCandidateId)}>
-                              <IconClock size={13} /> {slot.datetime}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>Свободных слотов для интервью пока нет</div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </div>
         )}
 
+        {/* ── КАНДИДАТ: Мои отклики ── */}
+        {auth.role === "candidate" && tab === "applications" && (
+          <div className="fade-in">
+            <div className="page-title">Мои отклики</div>
+            <div className="page-subtitle" style={{ marginBottom: "28px" }}>Статус ваших откликов на вакансии</div>
+
+            {error && <div className="alert alert-error"><IconAlert size={14} />{error}</div>}
+            {success && <div className="alert alert-success"><IconCheck size={14} />{success}</div>}
+
+            {appsLoading && <div className="empty-state">Загрузка...</div>}
+            {!appsLoading && applications.length === 0 && <div className="empty-state">Откликов пока нет</div>}
+
+            {applications.map(app => {
+              const stTone = statusTone(app.status)
+              return (
+                <div key={app.id} className="card">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "14px" }}>
+                    <div>
+                      <div style={{ fontWeight: 640, fontSize: "15.5px", color: "var(--text)", marginBottom: "8px" }}>{app.job_title}</div>
+                      <span className="badge" style={{ background: stTone.bg, color: stTone.color, border: `1px solid ${stTone.border}` }}>
+                        <span className="status-dot" style={{ background: stTone.color }} />{stTone.label}
+                      </span>
+                    </div>
+                    {app.score != null && (
+                      <div style={{ textAlign: "center", minWidth: "70px" }}>
+                        <div style={{ fontSize: "26px", fontWeight: 760, color: scoreTone(app.score).color, letterSpacing: "-0.03em" }}>{app.score}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {app.booked_slot && (
+                    <div style={{ marginTop: "18px", display: "flex", alignItems: "center", gap: "12px" }}>
+                      <span className="icon-circle" style={{ color: "var(--green)", borderColor: "var(--green-border)" }}><IconCheck size={16} /></span>
+                      <div>
+                        <div style={{ fontWeight: 600, color: "var(--text)" }}>Интервью забронировано</div>
+                        <div style={{ color: "var(--text-secondary)", fontSize: "13px", marginTop: "2px" }}>{app.booked_slot.datetime}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!app.booked_slot && app.status === "invited" && app.available_slots.length > 0 && (
+                    <div style={{ marginTop: "18px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600, color: "var(--text)", marginBottom: "12px", fontSize: "13.5px" }}>
+                        <IconCalendar size={15} /> Выберите слот для интервью
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {app.available_slots.map(slot => (
+                          <div key={slot.id}
+                            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "var(--surface-2)", border: "1px solid var(--border-strong)" }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: "7px", color: "var(--text)", fontSize: "13px", fontWeight: 520 }}>
+                              <IconClock size={13} /> {slot.datetime}
+                            </span>
+                            <button className="btn btn-sm btn-success-soft" onClick={() => bookMySlot(slot.id)}>
+                              <IconCheck size={13} /> Забронировать
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!app.booked_slot && app.status === "invited" && app.available_slots.length === 0 && (
+                    <div style={{ marginTop: "14px", color: "var(--text-secondary)", fontSize: "13px" }}>Свободных слотов пока нет</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         {/* ── НАНИМАТЕЛЬ ── */}
-        {tab === "employer" && (
+        {auth.role === "employer" && (
           <div className="fade-in">
             <div className="subnav">
               <button className={`subnav-btn ${subPage === "list" ? "active" : ""}`} onClick={() => setSubPage("list")}>Вакансии</button>
@@ -339,23 +426,8 @@ export default function App() {
                   <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>Критерии: {selectedJob.criteria}</div>
                 </div>
 
-                <div className="card">
-                  <div className="section-title" style={{ marginBottom: "18px" }}>Добавить кандидата</div>
-                  {error && <div className="alert alert-error"><IconAlert size={14} />{error}</div>}
-                  {success && <div className="alert alert-success"><IconCheck size={14} />{success}</div>}
-                  <label className="field-label">Имя кандидата</label>
-                  <input className="field" placeholder="Алия Сейткали" value={candidateForm.name}
-                    onChange={e => setCandidateForm({ ...candidateForm, name: e.target.value })} />
-                  <label className="field-label">Загрузить PDF резюме</label>
-                  <label className={`dropzone ${pdfFile ? "filled" : ""}`}>
-                    {pdfFile ? <><IconCheck size={15} /> {pdfFile.name}</> : <><IconFile size={15} /> Нажмите чтобы загрузить PDF</>}
-                    <input type="file" accept=".pdf" style={{ display: "none" }} onChange={e => setPdfFile(e.target.files[0])} />
-                  </label>
-                  <label className="field-label">Или вставьте текст</label>
-                  <textarea className="field" placeholder="Текст резюме..." value={candidateForm.resume}
-                    onChange={e => setCandidateForm({ ...candidateForm, resume: e.target.value })} />
-                  <button className="btn btn-primary" onClick={addCandidate}><IconPlus size={14} /> Добавить</button>
-                </div>
+                {error && <div className="alert alert-error"><IconAlert size={14} />{error}</div>}
+                {success && <div className="alert alert-success"><IconCheck size={14} />{success}</div>}
 
                 <div className="section-title" style={{ marginBottom: "14px" }}>Кандидаты ({candidates.length})</div>
                 {candidates.length === 0 && <div className="empty-state">Кандидатов пока нет</div>}
@@ -414,7 +486,6 @@ export default function App() {
                             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                               <button className="btn btn-sm btn-success-soft" onClick={() => updateStatus(r.candidate_id, 'invited')}><IconCheck size={13} /> Пригласить</button>
                               <button className="btn btn-sm btn-danger-soft" onClick={() => updateStatus(r.candidate_id, 'rejected')}><IconX size={13} /> Отклонить</button>
-                              <button className="btn btn-sm btn-neutral-soft" onClick={() => { setBookingSlot(r.candidate_id); setSubPage("slots") }}><IconCalendar size={13} /> Назначить интервью</button>
                             </div>
                           </div>
                         </div>
@@ -439,19 +510,6 @@ export default function App() {
                 <div style={{ display: "flex", alignItems: "center", gap: "9px", fontSize: "19px", fontWeight: 620, color: "var(--text)", marginBottom: "22px" }}>
                   <IconCalendar size={17} /> Слоты для интервью — {selectedJob.title}
                 </div>
-
-                {bookingSlot && (
-                  <div className="card card-accent">
-                    <p style={{ color: "var(--text)", fontWeight: 600, marginBottom: "14px", fontSize: "13.5px" }}>Выберите слот для кандидата:</p>
-                    <div className="grid-2">
-                      {slots.map(slot => (
-                        <button key={slot.id} className="slot-btn" disabled={slot.is_booked} onClick={() => bookSlot(slot.id, bookingSlot)}>
-                          {slot.is_booked ? <><IconLock size={13} /> Занят</> : <><IconClock size={13} /> {slot.datetime}</>}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 <div className="card">
                   <div className="section-title" style={{ marginBottom: "18px" }}>Добавить слот</div>

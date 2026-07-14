@@ -433,3 +433,44 @@ textarea.field { min-height: 96px; resize: vertical; line-height: 1.55; font-fam
   border: 1px solid var(--border-strong);
   color: var(--text-secondary);
 }
+
+/* ---------- auth screen ---------- */
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+}
+
+/* ---------- header user info ---------- */
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.3;
+}
+
+.user-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.user-role {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}

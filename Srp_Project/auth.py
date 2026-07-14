@@ -20,7 +20,7 @@ ALGORITHM = 'HS256'
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES', '1440'))
 
 pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl='auth/login', auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/auth/login', auto_error=False)
 
 
 def hash_password(password: str) -> str:
